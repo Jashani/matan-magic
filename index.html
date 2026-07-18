@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Professor Pigeon's Laboratory</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="header-bird">🐦</div>
+    <div class="header-text">
+      <h1>Professor Pigeon's Laboratory</h1>
+      <p class="subtitle">Optimal student-to-project assignment &middot; powered by min-cost flow</p>
+    </div>
+  </header>
+
+  <!-- Step 1: Upload -->
+  <section id="upload-section" class="card">
+    <h2><span class="step">1</span> Upload Student Preferences</h2>
+    <p class="hint">CSV format: <code>Name, 1st choice, 2nd choice, 3rd choice, 4th choice, 5th choice</code> — up to 5 preferences per student.</p>
+    <div class="upload-row">
+      <label class="file-label">
+        <input type="file" id="csv-input" accept=".csv">
+        <span class="file-btn">Choose CSV file</span>
+        <span id="file-name" class="file-name">No file selected</span>
+      </label>
+      <button id="sample-btn" class="btn btn-secondary">Download sample CSV</button>
+    </div>
+  </section>
+
+  <!-- Step 2: Preview -->
+  <section id="preview-section" class="card hidden">
+    <h2><span class="step">2</span> Preview Parsed Data</h2>
+    <div id="validation-errors"></div>
+    <div id="preview-table-container"></div>
+  </section>
+
+  <!-- Step 3: Configure projects + group sizes -->
+  <section id="config-section" class="card hidden">
+    <h2><span class="step">3</span> Configure Assignment</h2>
+    <div class="config-grid">
+
+      <div class="config-col">
+        <div class="config-col-header">
+          <h3>Projects</h3>
+          <span class="col-hint">One per line — add any missing from the CSV</span>
+        </div>
+        <textarea id="projects-input" class="projects-textarea"
+          placeholder="Project A&#10;Project B&#10;Project C&#10;..."></textarea>
+        <p class="meta" id="projects-count"></p>
+      </div>
+
+      <div class="config-col">
+        <div class="config-col-header">
+          <h3>Group sizes</h3>
+          <span class="col-hint">Applied equally to every project</span>
+        </div>
+        <div class="global-caps-row">
+          <div class="cap-field">
+            <label for="global-min">Min per group</label>
+            <input type="number" id="global-min" min="0" max="999" value="0">
+          </div>
+          <div class="cap-field">
+            <label for="global-max">Max per group</label>
+            <input type="number" id="global-max" min="1" max="999" value="3">
+          </div>
+        </div>
+        <p class="meta" id="cap-summary"></p>
+      </div>
+
+    </div>
+    <div class="run-row">
+      <button id="run-btn" class="btn btn-primary">🔬 Run Assignment</button>
+      <span id="capacity-warning" class="inline-warn hidden"></span>
+    </div>
+  </section>
+
+  <!-- Step 4: Results -->
+  <section id="results-section" class="card hidden">
+    <h2><span class="step">4</span> Assignment Results</h2>
+    <div id="summary-stats"></div>
+    <div class="toggle-row">
+      <label class="toggle-label">
+        <input type="checkbox" id="reveal-toggle">
+        <span class="toggle-slider"></span>
+        Show each student's achieved preference rank
+      </label>
+      <span class="toggle-hint">Off by default — switch on deliberately for classroom review</span>
+    </div>
+    <div id="results-container"></div>
+    <div class="action-row">
+      <button id="download-btn" class="btn btn-secondary">Download results CSV</button>
+      <button id="reset-btn" class="btn btn-danger">Reset &amp; start over</button>
+    </div>
+  </section>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
