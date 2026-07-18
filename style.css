@@ -223,8 +223,14 @@ h2 {
   cursor: pointer;
   font-size: .875rem;
   font-weight: 600;
+  text-decoration: none;
   transition: background .15s, transform .1s, box-shadow .15s, opacity .15s;
   white-space: nowrap;
+}
+
+.top-nav {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .btn:active:not(:disabled) { transform: scale(.96); }

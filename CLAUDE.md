@@ -1,14 +1,17 @@
 # Group Assignment Tool — Project Notes
 
-A single-page, no-build web app that optimally assigns students to projects based on ranked preferences. Runs locally via `python3 -m http.server` or by opening `index.html` directly.
+A no-build web app with two pages: preference-based assignment (optimal, via min-cost flow) and random assignment (no preferences). Runs locally via `python3 -m http.server` or by opening `index.html` directly.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `index.html` | All markup. Four `<section>` cards (steps 1–4). No framework. |
-| `app.js` | All logic — CSV parsing, solver, rendering. Single file, no modules. |
-| `style.css` | All styles. CSS custom properties for colours, no preprocessor. |
+| `index.html` | Preference-based assignment page. Four `<section>` cards (steps 1–4). No framework. |
+| `app.js` | Preference-based logic — CSV parsing, MCF solver, rendering. |
+| `random.html` | Random assignment page (no preferences). Two `<section>` cards: configure, results. Linked from `index.html` via the top-nav button. |
+| `random.js` | Random-assignment logic — parses pasted student/project lists, shuffles respecting min/max capacities, renders results. |
+| `common.js` | Shared helpers used by both `app.js` and `random.js`: `$`, `show`/`hide`, `esc`, `downloadBlob`, `spawnConfetti`. Loaded before the page-specific script. |
+| `style.css` | All styles, shared by both pages. CSS custom properties for colours, no preprocessor. |
 | `sample_60.csv` | 60-student test fixture: 20 categories, 18 chosen (Cat 19 & 20 never selected), Category 1 oversubscribed (15 students ranked it top-2). |
 | `.claude/launch.json` | Tells the preview tool to run `python3 -m http.server --directory /Users/yasha/git/Matan 8791`. |
 
@@ -44,6 +47,15 @@ state = {
   showRanks:  boolean,                    // toggle state
 }
 ```
+
+## Random assignment (`random.js`)
+
+No solver — students and projects are pasted as plain lists (one per line), not CSV. Algorithm:
+
+1. Every project starts at `globalMin`; remaining seats are handed out one at a time in a shuffled project order (capped at `globalMax`) so group sizes vary between runs.
+2. Students are shuffled independently and sliced into the resulting per-project counts.
+
+Feasibility (`totalMax >= n`, `globalMax >= globalMin`) is checked before solving, same pattern as the preference-based page's capacity checks.
 
 ## Key design decisions
 
