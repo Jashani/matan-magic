@@ -13,14 +13,14 @@
     <div class="header-bird">🐦</div>
     <div class="header-text">
       <h1>Professor Pigeon's Laboratory</h1>
-      <p class="subtitle">Optimal student-to-project assignment &middot; powered by min-cost flow</p>
+      <p class="subtitle">Let's assign students to projects!</p>
     </div>
   </header>
 
   <!-- Step 1: Upload -->
   <section id="upload-section" class="card">
     <h2><span class="step">1</span> Upload Student Preferences</h2>
-    <p class="hint">CSV format: <code>Name, 1st choice, 2nd choice, 3rd choice, 4th choice, 5th choice</code> — up to 5 preferences per student.</p>
+    <p class="hint">CSV format: <code>Name, 1st choice, 2nd choice, 3rd choice, 4th choice, 5th choice</code>. Up to 5 preferences per student.</p>
     <div class="upload-row">
       <label class="file-label">
         <input type="file" id="csv-input" accept=".csv">
@@ -46,7 +46,7 @@
       <div class="config-col">
         <div class="config-col-header">
           <h3>Projects</h3>
-          <span class="col-hint">One per line — add any missing from the CSV</span>
+          <span class="col-hint">One per line</span>
         </div>
         <textarea id="projects-input" class="projects-textarea"
           placeholder="Project A&#10;Project B&#10;Project C&#10;..."></textarea>
@@ -88,7 +88,6 @@
         <span class="toggle-slider"></span>
         Show each student's achieved preference rank
       </label>
-      <span class="toggle-hint">Off by default — switch on deliberately for classroom review</span>
     </div>
     <div id="results-container"></div>
     <div class="action-row">
