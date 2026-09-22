@@ -601,12 +601,15 @@ h2 {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: .6rem;
   padding: .6rem .85rem;
   background: linear-gradient(135deg, var(--primary-light) 0%, #ede9fe 100%);
   border-bottom: 1px solid #ddd6fe;
 }
 
 .cat-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 700;
   font-size: .88rem;
   color: var(--primary-dark);
@@ -615,6 +618,8 @@ h2 {
 .cat-count {
   /* "1 / 3" must keep its LTR reading order inside the RTL page */
   direction: ltr;
+  flex: 0 0 auto;
+  white-space: nowrap;
   font-size: .72rem;
   font-weight: 700;
   color: var(--primary);
@@ -642,7 +647,7 @@ h2 {
 .cat-lecturer {
   font-size: .78rem;
   color: var(--muted);
-  padding: 0 1rem .6rem;
+  padding: .6rem 1rem .55rem;
 }
 
 /* ── Rank badges ─────────────────────────────────────────────────────────────── */
