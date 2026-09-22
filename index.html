@@ -1,108 +1,114 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Professor Pigeon's Laboratory</title>
+  <title>היסטוריה של הלבוש - הגרלת פרויקטים</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="container">
 
-  <div class="top-nav">
-    <a href="random.html" class="btn btn-secondary">🎲 Random Assignment</a>
-  </div>
-
   <header>
     <div class="header-bird">🐦</div>
     <div class="header-text">
-      <h1>Professor Pigeon's Laboratory</h1>
-      <p class="subtitle">Let's assign students to projects!</p>
+      <h1>היסטוריה של הלבוש - הגרלת פרויקטים</h1>
+      <p class="subtitle">משבצים תלמידים לתקופות לפי העדפות ראשונות ושניות!</p>
     </div>
   </header>
 
-  <!-- Step 1: Upload -->
+  <!-- Step 1: Upload the three source files -->
   <section id="upload-section" class="card">
-    <h2><span class="step">1</span> Upload Student Preferences</h2>
-    <p class="hint">CSV format: <code>Name, 1st choice, 2nd choice, 3rd choice, 4th choice, 5th choice</code>. Up to 5 preferences per student.</p>
-    <div class="upload-row">
-      <label class="file-label">
-        <input type="file" id="csv-input" accept=".csv">
-        <span class="file-btn">Choose CSV file</span>
-        <span id="file-name" class="file-name">No file selected</span>
-      </label>
-      <button id="sample-btn" class="btn btn-secondary">Download sample CSV</button>
+    <h2><span class="step">1</span> העלאת שלושת הקבצים</h2>
+    <p class="hint">
+      מומלץ להעלות קובצי <code>.xlsx</code> (אין בהם בעיות קידוד עברית או בלבול בין פסיקים שבתוך שמות התקופות).
+      קובצי <code>.csv</code> נתמכים גם הם.
+    </p>
+
+    <div class="upload-list">
+      <div class="upload-item">
+        <label class="file-label">
+          <input type="file" id="students-input" accept=".xlsx,.xls,.csv">
+          <span class="file-btn">רשימת סטודנטים</span>
+          <span id="students-file-name" class="file-name">לא נבחר קובץ</span>
+        </label>
+        <span class="col-hint">עמודות: <code>שם מלא</code>, <code>תעודת זהות</code></span>
+      </div>
+
+      <div class="upload-item">
+        <label class="file-label">
+          <input type="file" id="projects-input" accept=".xlsx,.xls,.csv">
+          <span class="file-btn">רשימת תקופות</span>
+          <span id="projects-file-name" class="file-name">לא נבחר קובץ</span>
+        </label>
+        <span class="col-hint">עמודות: <code>תקופה</code>, <code>כמות סטודנטים</code>, <code>מרצה</code></span>
+      </div>
+
+      <div class="upload-item">
+        <label class="file-label">
+          <input type="file" id="prefs-input" accept=".xlsx,.xls,.csv">
+          <span class="file-btn">העדפות הסטודנטים</span>
+          <span id="prefs-file-name" class="file-name">לא נבחר קובץ</span>
+        </label>
+        <span class="col-hint">ייצוא מ-Google Forms: תעודת זהות, עדיפות ראשונה, עדיפות שניה</span>
+      </div>
     </div>
   </section>
 
-  <!-- Step 2: Preview -->
+  <!-- Step 2: Preview + validation -->
   <section id="preview-section" class="card hidden">
-    <h2><span class="step">2</span> Preview Parsed Data</h2>
+    <h2><span class="step">2</span> תצוגה מקדימה ובדיקת הנתונים</h2>
     <div id="validation-errors"></div>
     <div id="preview-table-container"></div>
   </section>
 
-  <!-- Step 3: Configure projects + group sizes -->
+  <!-- Step 3: Resolve unrecognised choices, then run -->
   <section id="config-section" class="card hidden">
-    <h2><span class="step">3</span> Configure Assignment</h2>
-    <div class="config-grid">
+    <h2><span class="step">3</span> אימות והרצת השיבוץ</h2>
 
-      <div class="config-col">
-        <div class="config-col-header">
-          <h3>Projects</h3>
-          <span class="col-hint">One per line</span>
-        </div>
-        <textarea id="projects-input" class="projects-textarea"
-          placeholder="Project A&#10;Project B&#10;Project C&#10;..."></textarea>
-        <p class="meta" id="projects-count"></p>
+    <div id="unmatched-box" class="hidden">
+      <div class="warning-box">
+        <strong>בחירות שלא זוהו</strong>
+        <p class="hint">
+          הטקסטים הבאים הופיעו בטופס ההעדפות אך אינם זהים לאף שם תקופה בקובץ התקופות.
+          לצד כל טקסט נבחרה ההתאמה הסבירה ביותר — <strong>בדקו אותה</strong>, ותקנו אם צריך.
+          ההתאמות שמוצגות כאן ייושמו בעת הרצת השיבוץ.
+        </p>
       </div>
-
-      <div class="config-col">
-        <div class="config-col-header">
-          <h3>Group sizes</h3>
-          <span class="col-hint">Applied equally to every project</span>
-        </div>
-        <div class="global-caps-row">
-          <div class="cap-field">
-            <label for="global-min">Min per group</label>
-            <input type="number" id="global-min" min="0" max="999" value="0">
-          </div>
-          <div class="cap-field">
-            <label for="global-max">Max per group</label>
-            <input type="number" id="global-max" min="1" max="999" value="3">
-          </div>
-        </div>
-        <p class="meta" id="cap-summary"></p>
-      </div>
-
+      <div id="unmatched-list"></div>
     </div>
+
+    <p class="meta" id="cap-summary"></p>
+
     <div class="run-row">
-      <button id="run-btn" class="btn btn-primary">🔬 Run Assignment</button>
+      <button id="run-btn" class="btn btn-primary">🔬 הרצת השיבוץ</button>
       <span id="capacity-warning" class="inline-warn hidden"></span>
     </div>
   </section>
 
   <!-- Step 4: Results -->
   <section id="results-section" class="card hidden">
-    <h2><span class="step">4</span> Assignment Results</h2>
+    <h2><span class="step">4</span> תוצאות השיבוץ</h2>
     <div id="summary-stats"></div>
     <div class="toggle-row">
       <label class="toggle-label">
         <input type="checkbox" id="reveal-toggle">
         <span class="toggle-slider"></span>
-        Show each student's achieved preference rank
+        הצגת רמת ההעדפה שקיבל כל סטודנט
       </label>
     </div>
     <div id="results-container"></div>
     <div class="action-row">
-      <button id="download-btn" class="btn btn-secondary">Download results CSV</button>
-      <button id="reset-btn" class="btn btn-danger">Reset &amp; start over</button>
+      <button id="download-xlsx-btn" class="btn btn-secondary">הורדת התוצאות כקובץ Excel</button>
+      <button id="download-csv-btn" class="btn btn-secondary">הורדת התוצאות כקובץ CSV</button>
+      <button id="reset-btn" class="btn btn-danger">איפוס והתחלה מחדש</button>
     </div>
   </section>
 
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="common.js"></script>
 <script src="app.js"></script>
 </body>

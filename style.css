@@ -75,7 +75,7 @@ header::before {
 header::after {
   content: '⚗️';
   position: absolute;
-  right: 2.5rem;
+  inset-inline-end: 2.5rem;
   top: 50%;
   transform: translateY(-50%);
   font-size: 3rem;
@@ -228,11 +228,6 @@ h2 {
   white-space: nowrap;
 }
 
-.top-nav {
-  display: flex;
-  justify-content: flex-end;
-}
-
 .btn:active:not(:disabled) { transform: scale(.96); }
 
 .btn-primary {
@@ -285,12 +280,20 @@ h2 {
 .btn-danger:hover { background: #fee2e2; }
 
 /* ── File upload ─────────────────────────────────────────────────────────────── */
-.upload-row {
+.upload-list {
+  display: flex;
+  flex-direction: column;
+  gap: .85rem;
+}
+
+.upload-item {
   display: flex;
   align-items: center;
   gap: .75rem;
   flex-wrap: wrap;
 }
+
+.upload-item .file-btn { min-width: 11.5rem; justify-content: center; }
 
 .file-label {
   display: flex;
@@ -341,7 +344,7 @@ h2 {
 }
 
 .warning-box ul,
-.error-box ul { margin-left: 1.25rem; margin-top: .35rem; }
+.error-box ul { margin-inline-start: 1.25rem; margin-top: .35rem; }
 
 .inline-warn {
   font-size: .82rem;
@@ -366,7 +369,7 @@ h2 {
 }
 
 .data-table th {
-  text-align: left;
+  text-align: start;
   padding: .55rem .9rem;
   background: var(--primary-light);
   border-bottom: 2px solid #ddd6fe;
@@ -387,115 +390,69 @@ h2 {
 .data-table tbody tr:last-child td { border-bottom: none; }
 .data-table tbody tr:hover          { background: #faf8ff; }
 
-/* ── Config two-column grid ──────────────────────────────────────────────────── */
-.config-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2rem;
-  margin-bottom: 1.25rem;
-}
-
-.config-col-header {
-  display: flex;
-  align-items: baseline;
-  gap: .6rem;
-  margin-bottom: .6rem;
-}
-
-.config-col-header h3 {
-  font-size: .9rem;
-  font-weight: 700;
-  color: var(--text);
-}
-
+/* ── Choice-matching confirmation ────────────────────────────────────────────── */
 .col-hint {
   font-size: .78rem;
   color: var(--muted);
 }
 
-.projects-textarea {
-  width: 100%;
-  min-height: 190px;
-  padding: .65rem .9rem;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  font-family: inherit;
-  font-size: .875rem;
-  line-height: 1.7;
-  resize: vertical;
-  color: var(--text);
-  background: #faf9ff;
-  transition: border-color .15s, box-shadow .15s;
-}
+#unmatched-box { margin-bottom: 1.25rem; }
 
-.projects-textarea:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(91,33,182,.14);
-  background: #fff;
-}
-
-@media (max-width: 640px) {
-  .config-grid { grid-template-columns: 1fr; }
-}
-
-/* ── Global capacity inputs ──────────────────────────────────────────────────── */
-.global-caps-row {
+.match-row {
   display: flex;
-  gap: 2rem;
+  align-items: center;
+  gap: 1rem;
   flex-wrap: wrap;
-  margin-bottom: .75rem;
+  padding: .7rem .9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  margin-bottom: .6rem;
 }
 
-.cap-field {
+.match-text {
+  flex: 1 1 18rem;
   display: flex;
   flex-direction: column;
-  gap: .4rem;
+  gap: .15rem;
+  min-width: 0;
 }
 
-.cap-field label {
-  font-size: .78rem;
-  font-weight: 700;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .06em;
+.match-quote {
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--warn-text);
 }
 
-.cap-field input[type="number"] {
-  width: 100px;
-  padding: .5rem .6rem;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  font-size: 1.2rem;
-  font-weight: 700;
-  color: var(--primary);
-  text-align: center;
-  background: #faf9ff;
-  transition: border-color .15s, box-shadow .15s;
-}
-
-.cap-field input[type="number"]:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(91,33,182,.14);
-  background: #fff;
-}
-
-/* ── Capacity table (legacy) ─────────────────────────────────────────────────── */
-.cap-table .cat-name-cell { font-weight: 600; }
-
-.cap-input {
-  width: 80px;
-  padding: .35rem .5rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: .875rem;
-  text-align: center;
+.match-select {
+  flex: 1 1 20rem;
+  min-width: 0;
+  max-width: 100%;
+  padding: .45rem .6rem;
+  font-family: inherit;
+  font-size: .82rem;
   color: var(--text);
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  text-align: start;
   transition: border-color .15s;
 }
 
-.cap-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(91,33,182,.14); }
+.match-select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(91,33,182,.14);
+}
+
+.preview-heading {
+  font-size: .9rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 1.25rem 0 .5rem;
+}
+
+.dash { color: var(--muted); }
 
 /* ── Run row ─────────────────────────────────────────────────────────────────── */
 .run-row {
@@ -547,7 +504,7 @@ h2 {
   content: '';
   position: absolute;
   top: 3px;
-  left: 3px;
+  inset-inline-start: 3px;
   width: 18px;
   height: 18px;
   background: #fff;
@@ -557,7 +514,7 @@ h2 {
 }
 
 .toggle-label input:checked + .toggle-slider             { background: var(--primary); }
-.toggle-label input:checked + .toggle-slider::after      { transform: translateX(20px); }
+.toggle-label input:checked + .toggle-slider::after      { transform: translateX(-20px); }
 
 .toggle-hint { font-size: .78rem; color: var(--muted); }
 
@@ -656,6 +613,8 @@ h2 {
 }
 
 .cat-count {
+  /* "1 / 3" must keep its LTR reading order inside the RTL page */
+  direction: ltr;
   font-size: .72rem;
   font-weight: 700;
   color: var(--primary);
@@ -678,6 +637,12 @@ h2 {
   text-align: center;
   font-size: .82rem;
   padding: .65rem !important;
+}
+
+.cat-lecturer {
+  font-size: .78rem;
+  color: var(--muted);
+  padding: 0 1rem .6rem;
 }
 
 /* ── Rank badges ─────────────────────────────────────────────────────────────── */

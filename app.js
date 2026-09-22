@@ -1,8 +1,18 @@
 'use strict';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const UNRANKED_COST = 99;
-const RANK_LABELS   = ['', '1st', '2nd', '3rd', '4th', '5th'];
+// Preference tiers. Costs are derived at solve time from the student count so the
+// objective is strictly lexicographic: first maximise primary placements, only
+// then maximise secondary ones. See buildCostMatrix().
+const TIER_PRIMARY   = 0;
+const TIER_SECONDARY = 1;
+const TIER_NONE      = 2;
+
+const LEVEL_LABELS = {
+  [TIER_PRIMARY]:   'עדיפות ראשונה',
+  [TIER_SECONDARY]: 'עדיפות שניה',
+  [TIER_NONE]:      'שיבוץ אקראי',
+};
 
 // ── Min-Cost Flow (SPFA Successive Shortest Paths) ────────────────────────────
 // Forward edges are at even indices; their reverse is always index ^ 1.
@@ -68,329 +78,546 @@ class MCFGraph {
 }
 
 // ── State ──────────────────────────────────────────────────────────────────────
+const rawFiles = {students: null, projects: null, prefs: null};  // array-of-arrays per file
+
 const state = {
-  rawData:    [],    // [{name: string, prefs: string[]}]
-  categories: [],    // sorted unique category names
-  globalMin:  0,     // min students per group (applied to every category)
-  globalMax:  3,     // max students per group (applied to every category)
-  results:    [],    // [{student, category, rankAchieved, noMatch}]
+  students:  [],         // [{id, name}]
+  projects:  [],         // [{name, capacity, lecturer}]
+  prefs:     new Map(),  // id → {primary: string[], secondary: string[]}
+  aliases:   new Map(),  // normalised form-text → project name (teacher-confirmed)
+  ignored:   new Set(),  // normalised form-text the teacher chose to leave unmatched
+  unmatched: [],         // [{text, count, suggestions: [{project, score}]}]
+  warnings:  [],
+  results:   [],         // [{id, name, project, lecturer, tier}]
   showRanks:  false,
-  revealMode: false, // true during the "Run Assignment" reveal sequence
+  revealMode: false,
 };
 
 // ── DOM refs ───────────────────────────────────────────────────────────────────
-const csvInput         = $('csv-input');
-const fileNameLabel    = $('file-name');
-const sampleBtn        = $('sample-btn');
+const studentsInput    = $('students-input');
+const projectsFileIn   = $('projects-input');
+const prefsInput       = $('prefs-input');
+const studentsFileName = $('students-file-name');
+const projectsFileName = $('projects-file-name');
+const prefsFileName    = $('prefs-file-name');
 const previewSection   = $('preview-section');
 const configSection    = $('config-section');
 const resultsSection   = $('results-section');
 const validationErrors = $('validation-errors');
 const previewTableCont = $('preview-table-container');
-const projectsInput    = $('projects-input');
-const projectsCount    = $('projects-count');
-const globalMinInput   = $('global-min');
-const globalMaxInput   = $('global-max');
+const unmatchedBox     = $('unmatched-box');
+const unmatchedList    = $('unmatched-list');
 const capSummary       = $('cap-summary');
 const capacityWarning  = $('capacity-warning');
 const runBtn           = $('run-btn');
 const revealToggle     = $('reveal-toggle');
 const resultsCont      = $('results-container');
 const summaryStats     = $('summary-stats');
-const downloadBtn      = $('download-btn');
+const downloadXlsxBtn  = $('download-xlsx-btn');
+const downloadCsvBtn   = $('download-csv-btn');
 const resetBtn         = $('reset-btn');
 
 const CONFETTI_PIECES = ['🎉', '✨', '⭐', '💫', '🌟', '🎊', '🔬', '🧪', '🕊️'];
 
-// ── Sample CSV ─────────────────────────────────────────────────────────────────
-sampleBtn.addEventListener('click', () => {
-  const rows = [
-    ['Name',  'Choice 1', 'Choice 2', 'Choice 3', 'Choice 4', 'Choice 5'],
-    ['Alice',  'Math',    'Science',  'Art',       'History',  'Music'],
-    ['Bob',    'Science', 'Math',     'History',   'Art',      'Music'],
-    ['Carol',  'Art',     'Music',    'Math',      'Science',  'History'],
-    ['Dave',   'History', 'Art',      'Science',   'Music',    'Math'],
-    ['Eve',    'Music',   'History',  'Art',       'Math',     'Science'],
-    ['Frank',  'Math',    'Art',      'Science',   'History',  'Music'],
-    ['Grace',  'Science', 'Music',    'History',   'Math',     'Art'],
-    ['Henry',  'Art',     'Science',  'Math',      'Music',    'History'],
-    ['Iris',   'Music',   'Math',     'Science',   'Art',      'History'],
-    ['James',  'History', 'Science',  'Art',       'Music',    'Math'],
-    ['Karen',  'Math',    'History',  'Music',     'Art',      'Science'],
-  ];
-  downloadBlob(Papa.unparse(rows), 'sample_preferences.csv', 'text/csv');
-});
+// ── Text normalisation ─────────────────────────────────────────────────────────
+// Project names arrive from two different sources (the projects sheet and the
+// Google Form) that differ in punctuation and stray spaces, so everything is
+// compared through this filter rather than by raw equality.
+function norm(s) {
+  return String(s)
+    .replace(/[֑-ׇ]/g, '')                  // nikud / cantillation
+    .replace(/[־‐-―]/g, '-')           // maqaf & unicode dashes → '-'
+    .replace(/[.,;:!?"'‘’“”]/g, ' ')
+    .replace(/\s*-\s*/g, '-')                         // "ה- 16" ≡ "ה-16"
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
 
-// ── File upload ────────────────────────────────────────────────────────────────
-csvInput.addEventListener('change', e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  fileNameLabel.textContent = file.name;
-  hide(resultsSection);
-  Papa.parse(file, {
-    header: true,
-    skipEmptyLines: true,
-    complete: result => handleParsed(result),
-    error: err => showFatalError(`CSV parse error: ${err.message}`),
+// Israeli IDs may carry a leading zero, so they stay strings throughout.
+function normId(s) {
+  const t = String(s).replace(/[\s'"\-]/g, '');
+  const m = /^(\d+(?:\.\d+)?)e\+?(\d+)$/i.exec(t);   // guard against 3.2256e+8
+  return m ? Number(t).toFixed(0) : t;
+}
+
+// IDs are never shown in full on screen — only in the downloaded file. Warnings
+// about rows that have no name to show quote the last four digits instead.
+const maskId = id => String(id).length > 4 ? `…${String(id).slice(-4)}` : String(id);
+
+const tokensOf = s => norm(s).split(' ').filter(Boolean);
+
+// ── Suggestion scoring (IDF-weighted cosine over tokens) ───────────────────────
+// Plain string similarity is not safe here: it ranks
+// "המאה ה-16, השליש האחרון. אליזבת הראשונה" closest to the 18th-century Marie
+// Antoinette period, because the shared middle phrase outweighs everything else.
+// Weighting tokens by rarity makes the distinctive words ("אליזבת") dominate.
+function buildScorer(projectNames) {
+  const df = new Map();
+  projectNames.forEach(p => new Set(tokensOf(p)).forEach(t => df.set(t, (df.get(t) || 0) + 1)));
+  const N   = projectNames.length;
+  const idf = t => Math.log((N + 1) / ((df.get(t) || 0) + 1)) + 1;
+
+  const vec = s => {
+    const v = new Map();
+    tokensOf(s).forEach(t => v.set(t, (v.get(t) || 0) + 1));
+    return v;
+  };
+  const weight = v => Math.sqrt([...v].reduce((a, [t, c]) => a + idf(t) * c, 0));
+
+  return (a, b) => {
+    const va = vec(a), vb = vec(b);
+    let inter = 0;
+    va.forEach((c, t) => { if (vb.has(t)) inter += idf(t) * Math.min(c, vb.get(t)); });
+    const d = weight(va) * weight(vb);
+    return d ? inter / d : 0;
+  };
+}
+
+// ── Column detection ───────────────────────────────────────────────────────────
+// Files are hand-maintained, so columns are located by header text rather than
+// by a fixed position.
+// A pattern is either a substring (matched anywhere, for prefixes such as
+// 'ראשונ') or a RegExp, used where a bare substring would over-match.
+const hitRank = (cell, pats) => {
+  const n = norm(cell);
+  return n === '' ? -1 : pats.findIndex(p => p instanceof RegExp ? p.test(n) : n.includes(p));
+};
+
+const matchesAny = (cell, pats) => hitRank(cell, pats) !== -1;
+
+function findHeaderRow(rows, patternGroups) {
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const hit = patternGroups.every(pats => rows[i].some(c => matchesAny(c, pats)));
+    if (hit) return i;
+  }
+  return -1;
+}
+
+// Patterns are listed most-specific-first, and the column matching the most
+// specific pattern wins. Picking the first matching column instead would tie
+// "תעודת זהות" with the Google-Forms "חותמת זמן" timestamp, which also contains
+// the loose "ת.ז" pattern.
+function findCol(header, pats) {
+  let best = -1, bestRank = Infinity;
+  header.forEach((c, i) => {
+    const rank = hitRank(c, pats);
+    if (rank !== -1 && rank < bestRank) { bestRank = rank; best = i; }
   });
-});
+  return best;
+}
 
-function handleParsed(parseResult) {
-  const fields = parseResult.meta.fields || [];
-  const raw    = parseResult.data;
-  const errors = [];
+const findCols = (header, pats) => header.map((c, i) => matchesAny(c, pats) ? i : -1).filter(i => i >= 0);
 
-  if (fields.length < 2) {
-    showFatalError('CSV must have at least 2 columns: a name column then one or more preference columns.');
+const COLS = {
+  id:        ['תעודת זהות', 'תעודת-זהות', 'מספר זהות', 'מס זהות', /(^| )ת[- ]?ז( |$)/, /(^| )id( |$)/],
+  name:      ['שם'],
+  project:   ['תקופה', 'פרויקט', 'פרוייקט'],
+  capacity:  ['כמות', 'קיבולת', 'מקומות', 'מספר סטודנטים'],
+  lecturer:  ['מרצה', 'מנחה'],
+  primary:   ['ראשונ'],
+  secondary: ['שני'],
+};
+
+// ── Source-file parsing ────────────────────────────────────────────────────────
+function parseStudents(rows) {
+  const h = findHeaderRow(rows, [COLS.id, COLS.name]);
+  if (h === -1) throw new Error('בקובץ הסטודנטים לא נמצאו עמודות "שם" ו-"תעודת זהות".');
+  const header = rows[h];
+  const idC    = findCol(header, COLS.id);
+  const nameC  = header.findIndex((c, i) => i !== idC && matchesAny(c, COLS.name));
+  if (nameC === -1) throw new Error('בקובץ הסטודנטים לא נמצאה עמודת "שם".');
+
+  const out = [], seen = new Set();
+  rows.slice(h + 1).forEach(r => {
+    const id = normId(r[idC] || ''), name = (r[nameC] || '').trim();
+    if (!id && !name) return;
+    if (!id)        { state.warnings.push(`הסטודנט/ית "${name}" ללא תעודת זהות — השורה דולגה`); return; }
+    if (seen.has(id)) { state.warnings.push(`תעודת זהות כפולה ברשימת הסטודנטים: ${id} — השורה דולגה`); return; }
+    seen.add(id);
+    out.push({id, name: name || id});
+  });
+  if (!out.length) throw new Error('לא נמצאו סטודנטים בקובץ.');
+  return out;
+}
+
+function parseProjects(rows) {
+  const h = findHeaderRow(rows, [COLS.project, COLS.capacity]);
+  if (h === -1) throw new Error('בקובץ התקופות לא נמצאו עמודות "תקופה" ו-"כמות סטודנטים".');
+  const header = rows[h];
+  const nameC  = findCol(header, COLS.project);
+  const capC   = findCol(header, COLS.capacity);
+  const lecC   = findCol(header, COLS.lecturer);
+
+  const out = [], seen = new Set();
+  rows.slice(h + 1).forEach(r => {
+    const name = (r[nameC] || '').trim();
+    if (!name) return;
+    const key = norm(name);
+    if (seen.has(key)) { state.warnings.push(`תקופה כפולה בקובץ התקופות: "${name}" — השורה דולגה`); return; }
+    seen.add(key);
+    const capacity = Math.max(0, Math.round(Number(String(r[capC] ?? '').replace(/[^\d.]/g, '')) || 0));
+    if (!capacity) state.warnings.push(`לתקופה "${name}" לא הוגדרה כמות סטודנטים — לא ישובצו אליה סטודנטים`);
+    out.push({name, capacity, lecturer: lecC >= 0 ? (r[lecC] || '').trim() : ''});
+  });
+  if (!out.length) throw new Error('לא נמצאו תקופות בקובץ.');
+  return out;
+}
+
+// Splits one Google-Forms cell that joined several period names with ", " —
+// which cannot be split on the comma, because the names contain commas
+// themselves. Longest names are matched first so a short name can never be
+// consumed out of the middle of a longer one.
+function splitChoices(cell, patterns) {
+  let rest = norm(cell);
+  if (!rest) return {found: [], leftovers: []};
+  const found = [];
+  for (const p of patterns) {
+    const i = rest.indexOf(p.key);
+    if (i === -1) continue;
+    found.push(p.project);
+    rest = `${rest.slice(0, i)}|${rest.slice(i + p.key.length)}`;
+  }
+  const leftovers = rest.split('|')
+    .map(s => s.replace(/^[\s,.|]+|[\s,.|]+$/g, ''))
+    .filter(Boolean);
+  return {found, leftovers};
+}
+
+function parsePrefs(rows, patterns) {
+  const h = findHeaderRow(rows, [COLS.id, COLS.primary]);
+  if (h === -1) throw new Error('בקובץ ההעדפות לא נמצאו עמודות "תעודת זהות" ו-"עדיפות ראשונה".');
+  const header = rows[h];
+  const idC    = findCol(header, COLS.id);
+  const priC   = findCol(header, COLS.primary);
+  // The form was edited mid-collection, so there can be more than one
+  // "second priority" column; responses live in whichever one is filled.
+  const secCs  = findCols(header, COLS.secondary).filter(i => i !== priC && i !== idC);
+
+  const prefs = new Map(), leftovers = [];
+  rows.slice(h + 1).forEach(r => {
+    const id = normId(r[idC] || '');
+    if (!id) return;
+
+    const pr = splitChoices(r[priC] || '', patterns);
+    const se = {found: [], leftovers: []};
+    secCs.forEach(c => {
+      const part = splitChoices(r[c] || '', patterns);
+      se.found.push(...part.found);
+      se.leftovers.push(...part.leftovers);
+    });
+    leftovers.push(...pr.leftovers, ...se.leftovers);
+
+    const primary = [...new Set(pr.found)];
+    // A period named in both tiers counts as primary — the better of the two.
+    const secondary = [...new Set(se.found)].filter(p => !primary.includes(p));
+
+    if (prefs.has(id)) state.warnings.push(`ת.ז ${maskId(id)} הגישה את הטופס יותר מפעם אחת — נלקחה ההגשה האחרונה`);
+    prefs.set(id, {primary, secondary});
+  });
+
+  return {prefs, leftovers};
+}
+
+// ── Build everything from the three loaded files ───────────────────────────────
+function rebuild(scroll = true) {
+  if (!rawFiles.students || !rawFiles.projects || !rawFiles.prefs) return;
+
+  state.warnings = [];
+  try {
+    state.students = parseStudents(rawFiles.students);
+    state.projects = parseProjects(rawFiles.projects);
+  } catch (err) {
+    showFatalError(err.message);
     return;
   }
 
-  const nameField  = fields[0];
-  const prefFields = fields.slice(1, 6);
-  const seenNames  = new Set();
+  // Matchable patterns: real project names plus any teacher-confirmed aliases.
+  const patterns = [
+    ...state.projects.map(p => ({key: norm(p.name), project: p.name})),
+    ...[...state.aliases].map(([key, project]) => ({key, project})),
+  ].filter(p => p.key).sort((a, b) => b.key.length - a.key.length);
 
-  const normalized = raw.map((row, idx) => {
-    const rowNum = idx + 2;
-    const name   = (row[nameField] || '').trim();
-    const prefs  = prefFields.map(f => (row[f] || '').trim()).filter(Boolean);
-    if (!name) { errors.push(`Row ${rowNum}: missing name — skipped`); return null; }
-    if (seenNames.has(name.toLowerCase())) { errors.push(`Row ${rowNum}: duplicate name "${name}" — skipped`); return null; }
-    seenNames.add(name.toLowerCase());
-    if (prefs.length === 0) errors.push(`Row ${rowNum} (${name}): no preferences listed — will be auto-assigned to fill remaining slots`);
-    return {name, prefs};
-  }).filter(Boolean);
+  let parsed;
+  try {
+    parsed = parsePrefs(rawFiles.prefs, patterns);
+  } catch (err) {
+    showFatalError(err.message);
+    return;
+  }
+  state.prefs = parsed.prefs;
 
-  const allCats = new Set();
-  normalized.forEach(r => r.prefs.forEach(p => allCats.add(p)));
+  // Cross-file checks.
+  const known = new Set(state.students.map(s => s.id));
+  [...state.prefs.keys()].filter(id => !known.has(id)).forEach(id => {
+    state.warnings.push(`ת.ז ${maskId(id)} מופיעה בקובץ ההעדפות אך לא ברשימת הסטודנטים — ההעדפות שלה לא ישמשו בשיבוץ`);
+  });
 
-  if (allCats.size === 0) { showFatalError('No category names found. Ensure your CSV has preference columns after the name column.'); return; }
-  if (normalized.length === 0) { showFatalError('No valid student rows found after parsing.'); return; }
+  const noPrefs = state.students.filter(s => {
+    const p = state.prefs.get(s.id);
+    return !p || (!p.primary.length && !p.secondary.length);
+  });
+  if (noPrefs.length) {
+    state.warnings.push(noPrefs.length === 1
+      ? `סטודנט/ית אחד/ת לא הגיש/ה העדפות (${noPrefs[0].name}) — ישובץ/תשובץ אקראית`
+      : `${noPrefs.length} סטודנטים לא הגישו העדפות — ישובצו אקראית`);
+  }
 
-  state.rawData    = normalized;
-  state.categories = [...allCats].sort();
-  state.results    = [];
+  const shortPrimary = state.students.filter(s => {
+    const p = state.prefs.get(s.id);
+    return p && p.primary.length > 0 && p.primary.length < 3;
+  }).length;
+  if (shortPrimary) state.warnings.push(`${shortPrimary} סטודנטים ציינו פחות מ-3 תקופות בעדיפות הראשונה`);
 
-  validationErrors.innerHTML = errors.length
-    ? `<div class="warning-box"><strong>Warnings (${errors.length}):</strong><ul>${
-        errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`
-    : '';
+  buildUnmatched(parsed.leftovers);
 
-  // Pre-fill the projects textarea with detected categories.
-  // Teacher can add any projects that no student listed (e.g. Category 19, 20).
-  projectsInput.value = state.categories.join('\n');
-
+  renderValidation();
   renderPreview();
+  renderUnmatched();
   updateCapSummary();
   show(previewSection);
   show(configSection);
-  previewSection.scrollIntoView({behavior: 'smooth'});
+  if (scroll) previewSection.scrollIntoView({behavior: 'smooth'});
 }
 
-// ── Preview table ──────────────────────────────────────────────────────────────
+function buildUnmatched(leftovers) {
+  const score  = buildScorer(state.projects.map(p => p.name));
+  const counts = new Map();
+  leftovers.forEach(t => counts.set(t, (counts.get(t) || 0) + 1));
+
+  state.unmatched = [...counts].map(([text, count]) => ({
+    text, count,
+    suggestions: state.projects
+      .map(p => ({project: p.name, score: score(text, p.name)}))
+      .sort((a, b) => b.score - a.score),
+  })).sort((a, b) => b.count - a.count);
+}
+
+// ── File inputs ────────────────────────────────────────────────────────────────
+function wireFileInput(input, label, key) {
+  input.addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    label.textContent = file.name;
+    hide(resultsSection);
+    state.results = [];
+    try {
+      rawFiles[key] = await readTable(file);
+      // A new source file invalidates aliases confirmed against the old one.
+      if (key !== 'prefs') state.aliases.clear();
+      rebuild();
+    } catch (err) {
+      showFatalError(err.message);
+    }
+  });
+}
+
+wireFileInput(studentsInput,  studentsFileName, 'students');
+wireFileInput(projectsFileIn, projectsFileName, 'projects');
+wireFileInput(prefsInput,     prefsFileName,    'prefs');
+
+// ── Validation + preview rendering ─────────────────────────────────────────────
+function renderValidation() {
+  validationErrors.innerHTML = state.warnings.length
+    ? `<div class="warning-box"><strong>אזהרות (${state.warnings.length}):</strong><ul>${
+        state.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>`
+    : '';
+}
+
 function renderPreview() {
-  const maxCols = Math.max(...state.rawData.map(r => r.prefs.length), 1);
-  const headers = ['Name', ...Array.from({length: maxCols}, (_, i) => `Choice ${i + 1}`)];
-  const thead   = `<tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr>`;
-  const tbody   = state.rawData.map(r => {
-    const cells = [r.name, ...r.prefs, ...Array(maxCols - r.prefs.length).fill('')];
-    return `<tr>${cells.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`;
+  const capacity = state.projects.reduce((a, p) => a + p.capacity, 0);
+
+  const projRows = state.projects.map(p => `<tr>
+      <td>${esc(p.name)}</td>
+      <td>${p.capacity}</td>
+      <td>${esc(p.lecturer)}</td>
+    </tr>`).join('');
+
+  const studRows = state.students.map(s => {
+    const p = state.prefs.get(s.id) || {primary: [], secondary: []};
+    return `<tr>
+      <td>${esc(s.name)}</td>
+      <td>${p.primary.length ? p.primary.map(esc).join('<br>') : '<span class="dash">—</span>'}</td>
+      <td>${p.secondary.length ? p.secondary.map(esc).join('<br>') : '<span class="dash">—</span>'}</td>
+    </tr>`;
   }).join('');
 
   previewTableCont.innerHTML = `
     <p class="meta">
-      <strong>${state.rawData.length}</strong> students &bull;
-      <strong>${state.categories.length}</strong> categories:
-      <em>${state.categories.map(esc).join(', ')}</em>
+      <strong>${state.students.length}</strong> סטודנטים &bull;
+      <strong>${state.projects.length}</strong> תקופות &bull;
+      <strong>${capacity}</strong> מקומות בסך הכול
     </p>
+    <h3 class="preview-heading">תקופות</h3>
     <div class="table-scroll">
-      <table class="data-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>
+      <table class="data-table">
+        <thead><tr><th>תקופה</th><th>כמות סטודנטים</th><th>מרצה</th></tr></thead>
+        <tbody>${projRows}</tbody>
+      </table>
+    </div>
+    <h3 class="preview-heading">סטודנטים והעדפותיהם</h3>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>שם</th><th>עדיפות ראשונה</th><th>עדיפות שניה</th></tr></thead>
+        <tbody>${studRows}</tbody>
+      </table>
     </div>`;
 }
 
-// ── Project list helpers ───────────────────────────────────────────────────────
-// Parses the textarea into a deduped, non-empty list of project names.
-function getProjects() {
-  const seen = new Set();
-  return projectsInput.value
-    .split('\n')
-    .map(s => s.trim())
-    .filter(s => {
-      if (!s || seen.has(s.toLowerCase())) return false;
-      seen.add(s.toLowerCase());
-      return true;
-    });
+// ── Unmatched-choice confirmation ──────────────────────────────────────────────
+function renderUnmatched() {
+  if (!state.unmatched.length) { hide(unmatchedBox); return; }
+
+  unmatchedList.innerHTML = state.unmatched.map((u, i) => {
+    const skip = state.ignored.has(norm(u.text));
+    const opts = u.suggestions.map((s, k) =>
+      `<option value="${esc(s.project)}"${k === 0 && !skip ? ' selected' : ''}>${esc(s.project)}</option>`).join('');
+    return `
+      <div class="match-row">
+        <div class="match-text">
+          <span class="match-quote">${esc(u.text)}</span>
+          <span class="col-hint">${u.count === 1 ? 'בחירה אחת' : `${u.count} בחירות`}</span>
+        </div>
+        <select class="match-select" data-idx="${i}">
+          ${opts}
+          <option value=""${skip ? ' selected' : ''}>— התעלמות מבחירה זו —</option>
+        </select>
+      </div>`;
+  }).join('');
+  show(unmatchedBox);
 }
 
-// ── Global capacity summary ────────────────────────────────────────────────────
-function updateCapSummary() {
-  if (!state.rawData.length) return;
-  const n        = state.rawData.length;
-  const projects = getProjects();
-  const m        = projects.length;
-  const gMax     = Math.max(0, parseInt(globalMaxInput.value) || 0);
-  const gMin     = Math.max(0, parseInt(globalMinInput.value) || 0);
-  const totalMax = m * gMax;
-  const totalMin = m * gMin;
+// Reads the dropdowns into state and re-parses. Called when the assignment runs,
+// so a pre-selected suggestion the teacher is happy with needs no extra click.
+function applyMatchSelections() {
+  const selects = unmatchedList.querySelectorAll('.match-select');
+  if (!selects.length) return;
+  state.ignored.clear();
+  selects.forEach(sel => {
+    const key = norm(state.unmatched[Number(sel.dataset.idx)].text);
+    if (sel.value) state.aliases.set(key, sel.value);
+    else           state.ignored.add(key);
+  });
+  rebuild(false);
+}
 
-  projectsCount.textContent = `${m} project${m !== 1 ? 's' : ''} defined`;
+// ── Capacity summary ───────────────────────────────────────────────────────────
+function updateCapSummary() {
+  const n        = state.students.length;
+  const capacity = state.projects.reduce((a, p) => a + p.capacity, 0);
 
   capSummary.innerHTML =
-    `${m} projects &times; max&nbsp;${gMax} = <strong>${totalMax} total slots</strong> for ${n} students` +
-    (gMin > 0 ? ` &bull; min&nbsp;${gMin} per group = ${totalMin} seats minimum` : '');
+    `<strong>${capacity} מקומות</strong> ב-${state.projects.length} תקופות עבור <strong>${n} סטודנטים</strong>` +
+    (capacity > n ? ` &bull; ${capacity - n} מקומות יישארו פנויים` : '');
 
-  if (m === 0) {
-    capacityWarning.textContent = '⚠ No projects defined — add at least one project above';
-    show(capacityWarning);
-  } else if (gMax < gMin) {
-    capacityWarning.textContent = '⚠ Max must be ≥ Min';
-    show(capacityWarning);
-  } else if (totalMax < n) {
+  if (capacity < n) {
     capacityWarning.textContent =
-      `⚠ Total max (${totalMax}) < students (${n}) — increase Max per group or add more projects`;
+      `⚠ סך המקומות (${capacity}) קטן ממספר הסטודנטים (${n}) — עדכנו את עמודת "כמות סטודנטים" בקובץ התקופות`;
+    show(capacityWarning);
+  } else if (state.ignored.size) {
+    capacityWarning.textContent =
+      `⚠ ${state.ignored.size === 1 ? 'בחירה אחת סומנה' : `${state.ignored.size} בחירות סומנו`} כ"התעלמות" ולא ייחשבו כהעדפה בשיבוץ`;
     show(capacityWarning);
   } else {
     hide(capacityWarning);
   }
 }
 
-projectsInput.addEventListener('input', updateCapSummary);
-globalMinInput.addEventListener('input', updateCapSummary);
-globalMaxInput.addEventListener('input', updateCapSummary);
-
 // ── Run button ─────────────────────────────────────────────────────────────────
 runBtn.addEventListener('click', () => {
-  const gMin     = Math.max(0, parseInt(globalMinInput.value) || 0);
-  const gMax     = Math.max(0, parseInt(globalMaxInput.value) || 0);
-  const projects = getProjects();
+  applyMatchSelections();
 
-  if (projects.length === 0) {
-    alert('No projects defined. Add at least one project name in the Projects list.');
+  const n        = state.students.length;
+  const capacity = state.projects.reduce((a, p) => a + p.capacity, 0);
+
+  if (!n)                 { alert('לא נטענו סטודנטים.'); return; }
+  if (!state.projects.length) { alert('לא נטענו תקופות.'); return; }
+  if (capacity < n) {
+    alert(`לא ניתן לשבץ את כל ${n} הסטודנטים: סך המקומות בקובץ התקופות הוא ${capacity} בלבד.`);
     return;
   }
-  if (gMax < gMin) {
-    alert('Max students per group must be ≥ Min students per group.');
-    return;
-  }
+  if (state.unmatched.length &&
+      !confirm(`${state.unmatched.length === 1 ? 'בחירה אחת נותרה' : `${state.unmatched.length} בחירות נותרו`} ללא התאמה ולא ייחשבו כהעדפה.\n\nלהמשיך בכל זאת?`)) return;
 
-  const n        = state.rawData.length;
-  const m        = projects.length;
-  const totalMax = m * gMax;
-  const totalMin = m * gMin;
-
-  if (totalMax < n) {
-    alert(`Cannot place all ${n} students: ${m} projects × max ${gMax} = only ${totalMax} slots.\n\nAdd more projects or increase "Max per group".`);
-    return;
-  }
-  if (totalMin > n) {
-    if (!confirm(`Total minimum (${m} projects × min ${gMin} = ${totalMin}) exceeds student count (${n}).\nThis may produce an infeasible assignment. Continue anyway?`)) return;
-  }
-
-  // The textarea is the authoritative project list — update state before solving.
-  state.categories = projects;
-  state.globalMin  = gMin;
-  state.globalMax  = gMax;
-
-  runBtn.disabled   = true;
-  runBtn.innerHTML  = '<span class="btn-spinner"></span> Professor Pigeon is thinking…';
+  runBtn.disabled  = true;
+  runBtn.innerHTML = '<span class="btn-spinner"></span> מחשב את השיבוץ…';
   runBtn.classList.add('btn-running');
 
   setTimeout(() => {
     try {
-      state.results    = solve();
-      state.showRanks  = false;
-      state.revealMode = true;
+      state.results        = solve();
+      state.showRanks      = false;
+      state.revealMode     = true;
       revealToggle.checked = false;
       renderResults();
       show(resultsSection);
       resultsSection.scrollIntoView({behavior: 'smooth'});
       setTimeout(() => spawnConfetti(CONFETTI_PIECES), 450);
     } catch (err) {
-      alert(`Assignment failed: ${err.message}`);
+      alert(`השיבוץ נכשל: ${err.message}`);
     } finally {
-      runBtn.disabled   = false;
-      runBtn.innerHTML  = '🔬 Run Assignment';
+      runBtn.disabled  = false;
+      runBtn.innerHTML = '🔬 הרצת השיבוץ';
       runBtn.classList.remove('btn-running');
-      state.revealMode  = false;
+      state.revealMode = false;
     }
   }, 30);
 });
 
-// ── Solver (min-cost flow with lower-bound transformation) ─────────────────────
+// ── Solver ─────────────────────────────────────────────────────────────────────
+function tierOf(studentId, projectName) {
+  const p = state.prefs.get(studentId);
+  if (!p) return TIER_NONE;
+  if (p.primary.includes(projectName))   return TIER_PRIMARY;
+  if (p.secondary.includes(projectName)) return TIER_SECONDARY;
+  return TIER_NONE;
+}
+
+// Tier costs 0 / A / A+1 with A = n+1 make the objective lexicographic: giving up
+// one primary placement costs A, which exceeds the largest possible saving from
+// every other student combined (at most n). The sub-unit jitter only breaks ties,
+// so that the three unordered choices inside a tier — and the leftover places for
+// students with no matching choice — are handed out at random rather than always
+// favouring whichever period appears first in the file.
 function buildCostMatrix() {
-  return state.rawData.map(student =>
-    state.categories.map(cat => {
-      const rank = student.prefs.indexOf(cat);
-      return rank === -1 ? UNRANKED_COST : rank + 1;
-    })
-  );
+  const n      = state.students.length;
+  const A      = n + 1;
+  const TIER   = {[TIER_PRIMARY]: 0, [TIER_SECONDARY]: A, [TIER_NONE]: A + 1};
+  const jitter = () => Math.random() / (2 * n + 2);
+  return state.students.map(s =>
+    state.projects.map(p => TIER[tierOf(s.id, p.name)] + jitter()));
 }
 
 function solve() {
-  const students = state.rawData;
-  const cats     = state.categories;
-  const n        = students.length;
-  const m        = cats.length;
-  const cost     = buildCostMatrix();
-  const gMin     = state.globalMin;
-  const gMax     = state.globalMax;
+  const n    = state.students.length;
+  const m    = state.projects.length;
+  const cost = buildCostMatrix();
 
-  // Node layout: S=0, students 1..n, cats n+1..n+m, T=n+m+1, SS=n+m+2, TT=n+m+3
-  // Lower-bound transformation enforces per-category min and max simultaneously.
-  const S  = 0;
-  const T  = n + m + 1;
-  const SS = n + m + 2;
-  const TT = n + m + 3;
-  const g  = new MCFGraph(n + m + 4);
+  // Node layout: S=0, students 1..n, projects n+1..n+m, T=n+m+1
+  const S = 0;
+  const T = n + m + 1;
+  const g = new MCFGraph(n + m + 2);
 
-  const excess = new Array(n + m + 4).fill(0);
+  for (let i = 0; i < n; i++) g.addEdge(S, i + 1, 1, 0);
 
-  // S→student (mandatory, lo=hi=1): removed from graph, adjust excess only
-  for (let i = 0; i < n; i++) { excess[i + 1] += 1; excess[S] -= 1; }
-
-  // student→category (lo=0, hi=1)
-  const catEids = Array.from({length: n}, () => []);
+  const eids = Array.from({length: n}, () => []);
   for (let i = 0; i < n; i++)
     for (let j = 0; j < m; j++)
-      catEids[i][j] = g.addEdge(i + 1, n + 1 + j, 1, cost[i][j]);
+      eids[i][j] = g.addEdge(i + 1, n + 1 + j, 1, cost[i][j]);
 
-  // category→T (lo=gMin, hi=gMax)
-  for (let j = 0; j < m; j++) {
-    if (gMax > gMin) g.addEdge(n + 1 + j, T, gMax - gMin, 0);
-    excess[n + 1 + j] -= gMin;
-    excess[T]         += gMin;
-  }
+  for (let j = 0; j < m; j++) g.addEdge(n + 1 + j, T, state.projects[j].capacity, 0);
 
-  // Return edge completes the circulation
-  g.addEdge(T, S, n, 0);
+  const {flow} = g.minCostFlow(S, T, n);
+  if (flow < n) throw new Error(`רק ${flow} מתוך ${n} הסטודנטים ניתנים לשיבוץ. הגדילו את "כמות סטודנטים" בקובץ התקופות.`);
 
-  // SS/TT edges from excess
-  let totalPositive = 0;
-  for (let v = 0; v <= T; v++) {
-    if (excess[v] > 0)      { g.addEdge(SS, v, excess[v], 0); totalPositive += excess[v]; }
-    else if (excess[v] < 0) { g.addEdge(v, TT, -excess[v], 0); }
-  }
-
-  const result = g.minCostFlow(SS, TT, totalPositive);
-
-  if (result.flow < totalPositive) {
-    if (gMin > 0) {
-      throw new Error(
-        `No feasible assignment with min ${gMin} per group. ` +
-        `Try reducing "Min students per group" or increasing "Max students per group".`
-      );
-    }
-    const placed = result.flow - m * gMin;
-    throw new Error(`Only ${placed} of ${n} students could be placed. Increase "Max students per group".`);
-  }
-
-  return students.map((student, i) => {
+  return state.students.map((s, i) => {
     for (let j = 0; j < m; j++) {
-      if (g.edges[catEids[i][j]].flow === 1) {
-        const c = cost[i][j];
-        return {student: student.name, category: cats[j], rankAchieved: c === UNRANKED_COST ? null : c, noMatch: c === UNRANKED_COST};
+      if (g.edges[eids[i][j]].flow === 1) {
+        const p = state.projects[j];
+        return {id: s.id, name: s.name, project: p.name, lecturer: p.lecturer, tier: tierOf(s.id, p.name)};
       }
     }
-    return {student: student.name, category: null, rankAchieved: null, noMatch: true};
+    return {id: s.id, name: s.name, project: '', lecturer: '', tier: TIER_NONE};
   });
 }
 
@@ -400,103 +627,111 @@ revealToggle.addEventListener('change', () => {
   if (state.results.length) renderResults();
 });
 
-function rankBadge(rankAchieved, noMatch) {
-  if (noMatch || rankAchieved === null)
-    return '<span class="badge badge-warn">No preference matched</span>';
-  const label = RANK_LABELS[rankAchieved] || `${rankAchieved}th`;
-  const cls   = rankAchieved === 1 ? 'badge-top1' : rankAchieved <= 2 ? 'badge-top2' : 'badge-rank';
-  return `<span class="badge ${cls}">${label} choice</span>`;
+function tierBadge(tier) {
+  const cls = tier === TIER_PRIMARY ? 'badge-top1' : tier === TIER_SECONDARY ? 'badge-top2' : 'badge-warn';
+  return `<span class="badge ${cls}">${LEVEL_LABELS[tier]}</span>`;
 }
 
 function renderResults() {
-  const {results, categories, globalMin, globalMax, showRanks} = state;
+  const {results, projects, showRanks} = state;
 
-  const byCat = {};
-  categories.forEach(c => { byCat[c] = []; });
-  results.forEach(r => { if (r.category) byCat[r.category].push(r); });
+  const byProject = new Map(projects.map(p => [p.name, []]));
+  results.forEach(r => { if (byProject.has(r.project)) byProject.get(r.project).push(r); });
 
-  const placed    = results.filter(r => r.category !== null).length;
-  const noMatch   = results.filter(r => r.noMatch).length;
-  const autoAssigned = results.filter(r => r.noPrefs).length;
-  const top1      = results.filter(r => r.rankAchieved === 1).length;
-  const top2      = results.filter(r => r.rankAchieved !== null && r.rankAchieved <= 2).length;
-  const emptyCats = categories.filter(c => byCat[c].length === 0).length;
-  const belowMin  = globalMin > 0 ? categories.filter(c => byCat[c].length < globalMin) : [];
-  const pct       = k => placed ? Math.round(k / placed * 100) : 0;
+  const n       = results.length;
+  const primary = results.filter(r => r.tier === TIER_PRIMARY).length;
+  const second  = results.filter(r => r.tier === TIER_SECONDARY).length;
+  const random  = results.filter(r => r.tier === TIER_NONE).length;
+  const empty   = projects.filter(p => byProject.get(p.name).length === 0).length;
+  const pct     = k => n ? Math.round(k / n * 100) : 0;
 
   const warnChips = [
-    noMatch   ? `${noMatch} student${noMatch > 1 ? 's' : ''} with no matched preference` : '',
-    emptyCats ? `${emptyCats} empty categor${emptyCats > 1 ? 'ies' : 'y'}` : '',
-    ...belowMin.map(c => `${esc(c)}: ${byCat[c].length} placed (min ${globalMin})`),
+    random ? (random > 1 ? `${random} סטודנטים שובצו אקראית` : 'סטודנט/ית אחד/ת שובץ/ה אקראית') : '',
+    empty  ? (empty  > 1 ? `${empty} תקופות ללא סטודנטים`   : 'תקופה אחת ללא סטודנטים')        : '',
   ].filter(Boolean);
 
   summaryStats.innerHTML = `
     <div class="stats-row">
-      <div class="stat-chip">${placed} / ${results.length} placed</div>
-      <div class="stat-chip">${pct(top1)}% got 1st choice</div>
-      <div class="stat-chip">${pct(top2)}% got top-2 choice</div>
+      <div class="stat-chip">${primary} מתוך ${n} קיבלו עדיפות ראשונה (${pct(primary)}%)</div>
+      <div class="stat-chip">${second} קיבלו עדיפות שניה (${pct(second)}%)</div>
+      <div class="stat-chip">${pct(primary + second)}% קיבלו אחת מהבחירות שלהם</div>
       ${warnChips.map(w => `<div class="stat-chip stat-chip-warn">${w}</div>`).join('')}
     </div>`;
 
-  const cards = categories.map(cat => {
-    const members = byCat[cat];
-    const full    = members.length >= globalMax;
-    const empty   = members.length === 0;
+  const cards = projects.map(p => {
+    const members = byProject.get(p.name);
+    const full    = members.length >= p.capacity;
 
     const bodyRows = members.length
       ? members.map(r => `<tr>
-          <td>${esc(r.student)}</td>
-          ${showRanks ? `<td>${rankBadge(r.rankAchieved, r.noMatch)}</td>` : ''}
+          <td>${esc(r.name)}</td>
+          ${showRanks ? `<td>${tierBadge(r.tier)}</td>` : ''}
         </tr>`).join('')
-      : `<tr><td colspan="${showRanks ? 2 : 1}" class="empty-msg">No students assigned</td></tr>`;
+      : `<tr><td colspan="${showRanks ? 2 : 1}" class="empty-msg">לא שובצו סטודנטים</td></tr>`;
 
     return `
-      <div class="cat-card${empty ? ' cat-empty' : ''}">
+      <div class="cat-card${members.length ? '' : ' cat-empty'}">
         <div class="cat-header">
-          <span class="cat-title">${esc(cat)}</span>
-          <span class="cat-count${full ? ' at-cap' : ''}">${members.length}&thinsp;/&thinsp;${globalMax}</span>
+          <span class="cat-title">${esc(p.name)}</span>
+          <span class="cat-count${full ? ' at-cap' : ''}">${members.length}&thinsp;/&thinsp;${p.capacity}</span>
         </div>
+        ${p.lecturer ? `<div class="cat-lecturer">מרצה: ${esc(p.lecturer)}</div>` : ''}
         <table class="data-table inner-table">
-          <thead><tr><th>Student</th>${showRanks ? '<th>Preference</th>' : ''}</tr></thead>
+          <thead><tr><th>סטודנט/ית</th>${showRanks ? '<th>רמת העדפה</th>' : ''}</tr></thead>
           <tbody>${bodyRows}</tbody>
         </table>
       </div>`;
   }).join('');
 
-  const revealClass = state.revealMode ? ' cat-grid--reveal' : '';
-  resultsCont.innerHTML = `<div class="cat-grid${revealClass}">${cards}</div>`;
+  resultsCont.innerHTML = `<div class="cat-grid${state.revealMode ? ' cat-grid--reveal' : ''}">${cards}</div>`;
   if (state.revealMode) {
-    resultsCont.querySelectorAll('.cat-card').forEach((el, i) => {
-      el.style.animationDelay = `${i * 0.07}s`;
-    });
+    resultsCont.querySelectorAll('.cat-card').forEach((el, i) => { el.style.animationDelay = `${i * 0.07}s`; });
   }
 }
 
-// ── Download results ───────────────────────────────────────────────────────────
-downloadBtn.addEventListener('click', () => {
-  const rows = [['Student', 'Assigned Category', 'Preference Rank']];
-  state.results.forEach(r => {
-    const rank = r.noMatch               ? 'No match'
-               : r.rankAchieved !== null ? `${RANK_LABELS[r.rankAchieved] || r.rankAchieved} choice`
-               : '';
-    rows.push([r.student, r.category || 'Unassigned', rank]);
+// ── Export ─────────────────────────────────────────────────────────────────────
+const EXPORT_HEADER = ['ID', 'שם', 'תקופה שהוקצתה', 'מרצה', 'רמת העדפה'];
+
+function exportRows() {
+  return [EXPORT_HEADER, ...state.results.map(r =>
+    [r.id, r.name, r.project, r.lecturer, LEVEL_LABELS[r.tier]])];
+}
+
+downloadCsvBtn.addEventListener('click', () => {
+  if (!state.results.length) return;
+  downloadBlob(Papa.unparse(exportRows()), 'שיבוץ_תקופות.csv', 'text/csv');
+});
+
+downloadXlsxBtn.addEventListener('click', () => {
+  if (!state.results.length) return;
+  const ws = XLSX.utils.aoa_to_sheet(exportRows());
+  // IDs are text: without this Excel drops any leading zero and re-formats them.
+  state.results.forEach((r, i) => {
+    const cell = ws[XLSX.utils.encode_cell({r: i + 1, c: 0})];
+    if (cell) { cell.t = 's'; cell.v = String(r.id); }
   });
-  downloadBlob(Papa.unparse(rows), 'group_assignments.csv', 'text/csv');
+  ws['!cols'] = [{wch: 12}, {wch: 22}, {wch: 48}, {wch: 12}, {wch: 16}];
+  const wb = XLSX.utils.book_new();
+  wb.Workbook = {Views: [{RTL: true}]};
+  XLSX.utils.book_append_sheet(wb, ws, 'שיבוץ');
+  XLSX.writeFile(wb, 'שיבוץ_תקופות.xlsx');
 });
 
 // ── Reset ──────────────────────────────────────────────────────────────────────
 resetBtn.addEventListener('click', () => {
-  Object.assign(state, {rawData: [], categories: [], globalMin: 0, globalMax: 3, results: [], showRanks: false, revealMode: false});
-  revealToggle.checked       = false;
-  csvInput.value             = '';
-  fileNameLabel.textContent  = 'No file selected';
-  projectsInput.value        = '';
-  projectsCount.textContent  = '';
-  globalMinInput.value       = '0';
-  globalMaxInput.value       = '3';
+  Object.assign(rawFiles, {students: null, projects: null, prefs: null});
+  Object.assign(state, {
+    students: [], projects: [], prefs: new Map(), aliases: new Map(), ignored: new Set(),
+    unmatched: [], warnings: [], results: [], showRanks: false, revealMode: false,
+  });
+  revealToggle.checked = false;
+  [studentsInput, projectsFileIn, prefsInput].forEach(i => { i.value = ''; });
+  [studentsFileName, projectsFileName, prefsFileName].forEach(l => { l.textContent = 'לא נבחר קובץ'; });
   validationErrors.innerHTML = '';
   previewTableCont.innerHTML = '';
+  unmatchedList.innerHTML    = '';
   capSummary.innerHTML       = '';
+  hide(unmatchedBox);
   hide(previewSection);
   hide(configSection);
   hide(resultsSection);
@@ -510,4 +745,5 @@ function showFatalError(msg) {
   previewTableCont.innerHTML = '';
   show(previewSection);
   hide(configSection);
+  hide(resultsSection);
 }
