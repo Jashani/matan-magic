@@ -41,7 +41,7 @@ body {
 }
 
 .container {
-  max-width: 940px;
+  max-width: 1400px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -522,10 +522,21 @@ h2 {
   list-style: none;
   margin: .3rem 0 0;
   padding: 0;
-  font-size: .85rem;
+  font-size: .9rem;
+  line-height: 1.7;
 }
 
-.lec-students li { padding: .1rem 0; }
+/* Names run on one line, divided by a trailing "|" so a wrapped line never starts with one. */
+.lec-students li {
+  display: inline;
+  white-space: nowrap;  /* a name never breaks across lines; lines break between names */
+}
+
+.lec-students li:not(:last-child)::after {
+  content: '|';
+  margin-inline: .9rem;
+  color: var(--muted);
+}
 
 .lec-students .empty-msg {
   color: var(--muted);

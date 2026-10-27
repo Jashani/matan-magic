@@ -36,7 +36,7 @@ Each student picks **3 unordered first-priority** periods and **3 unordered seco
 1. **Upload** the three files (any order; parsing runs once all three are present).
 2. **Preview** — periods table, students-with-preferences table, validation warnings.
 3. **Review unrecognised choices, then run** — see below.
-4. **Results** — one card per lecturer (not per period), each listing that lecturer's numbered periods with their students. **No preference levels and no placement statistics on screen** (the page is projected for the students); both live only in the exports. Export to xlsx or CSV. Reset.
+4. **Results** — one card per lecturer (not per period), each listing that lecturer's numbered periods with their students as names on one run-on line separated by `|` (the layout is wide, `.container` 1400px, so the whole result fits one screen for a photo). **No preference levels and no placement statistics on screen** (the page is projected for the students); both live only in the exports. Export to xlsx or CSV. Reset.
 
 **ID numbers are never shown on screen** — not in the preview, not in the results —
 only in the downloaded file, so results can be projected publicly. Warnings about a

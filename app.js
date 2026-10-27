@@ -636,7 +636,7 @@ function renderResults() {
     const items = periods.map(p => {
       const members = byProject.get(p.name);
       const students = members.length
-        ? members.map(r => `<li>${esc(r.name)}</li>`).join('')
+        ? members.map(r => `<li>${esc(r.name)}</li>`).join(' ')
         : '<li class="empty-msg">לא שובצו סטודנטים</li>';
       return `<li class="lec-period"><span class="lec-period-name">${esc(p.name)}</span><ul class="lec-students">${students}</ul></li>`;
     }).join('');
