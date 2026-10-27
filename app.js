@@ -89,7 +89,6 @@ const state = {
   unmatched: [],         // [{text, count, suggestions: [{project, score}]}]
   warnings:  [],
   results:   [],         // [{id, name, project, lecturer, tier}]
-  showRanks:  false,
   revealMode: false,
 };
 
@@ -110,9 +109,7 @@ const unmatchedList    = $('unmatched-list');
 const capSummary       = $('cap-summary');
 const capacityWarning  = $('capacity-warning');
 const runBtn           = $('run-btn');
-const revealToggle     = $('reveal-toggle');
 const resultsCont      = $('results-container');
-const summaryStats     = $('summary-stats');
 const downloadXlsxBtn  = $('download-xlsx-btn');
 const downloadCsvBtn   = $('download-csv-btn');
 const resetBtn         = $('reset-btn');
@@ -546,9 +543,7 @@ runBtn.addEventListener('click', () => {
   setTimeout(() => {
     try {
       state.results        = solve();
-      state.showRanks      = false;
       state.revealMode     = true;
-      revealToggle.checked = false;
       renderResults();
       show(resultsSection);
       resultsSection.scrollIntoView({behavior: 'smooth'});
@@ -622,79 +617,91 @@ function solve() {
 }
 
 // ── Results rendering ──────────────────────────────────────────────────────────
-revealToggle.addEventListener('change', () => {
-  state.showRanks = revealToggle.checked;
-  if (state.results.length) renderResults();
-});
-
-function tierBadge(tier) {
-  const cls = tier === TIER_PRIMARY ? 'badge-top1' : tier === TIER_SECONDARY ? 'badge-top2' : 'badge-warn';
-  return `<span class="badge ${cls}">${LEVEL_LABELS[tier]}</span>`;
-}
-
+// One card per lecturer, listing that lecturer's periods in file order. Placement
+// statistics are deliberately not shown here — the page may be projected for the
+// students — and go into the exported xlsx instead (see resultStats).
 function renderResults() {
-  const {results, projects, showRanks} = state;
+  const {results, projects} = state;
 
   const byProject = new Map(projects.map(p => [p.name, []]));
   results.forEach(r => { if (byProject.has(r.project)) byProject.get(r.project).push(r); });
 
-  const n       = results.length;
-  const primary = results.filter(r => r.tier === TIER_PRIMARY).length;
-  const second  = results.filter(r => r.tier === TIER_SECONDARY).length;
-  const random  = results.filter(r => r.tier === TIER_NONE).length;
-  const empty   = projects.filter(p => byProject.get(p.name).length === 0).length;
-  const pct     = k => n ? Math.round(k / n * 100) : 0;
+  const byLecturer = new Map();
+  projects.forEach(p => {
+    if (!byLecturer.has(p.lecturer)) byLecturer.set(p.lecturer, []);
+    byLecturer.get(p.lecturer).push(p);
+  });
 
-  const warnChips = [
-    random ? (random > 1 ? `${random} סטודנטים שובצו אקראית` : 'סטודנט/ית אחד/ת שובץ/ה אקראית') : '',
-    empty  ? (empty  > 1 ? `${empty} תקופות ללא סטודנטים`   : 'תקופה אחת ללא סטודנטים')        : '',
-  ].filter(Boolean);
-
-  summaryStats.innerHTML = `
-    <div class="stats-row">
-      <div class="stat-chip">${primary} מתוך ${n} קיבלו עדיפות ראשונה (${pct(primary)}%)</div>
-      <div class="stat-chip">${second} קיבלו עדיפות שניה (${pct(second)}%)</div>
-      <div class="stat-chip">${pct(primary + second)}% קיבלו אחת מהבחירות שלהם</div>
-      ${warnChips.map(w => `<div class="stat-chip stat-chip-warn">${w}</div>`).join('')}
-    </div>`;
-
-  const cards = projects.map(p => {
-    const members = byProject.get(p.name);
-    const full    = members.length >= p.capacity;
-
-    const bodyRows = members.length
-      ? members.map(r => `<tr>
-          <td>${esc(r.name)}</td>
-          ${showRanks ? `<td>${tierBadge(r.tier)}</td>` : ''}
-        </tr>`).join('')
-      : `<tr><td colspan="${showRanks ? 2 : 1}" class="empty-msg">לא שובצו סטודנטים</td></tr>`;
+  const cards = [...byLecturer].map(([lecturer, periods]) => {
+    const items = periods.map(p => {
+      const members = byProject.get(p.name);
+      const students = members.length
+        ? members.map(r => `<li>${esc(r.name)}</li>`).join('')
+        : '<li class="empty-msg">לא שובצו סטודנטים</li>';
+      return `<li class="lec-period"><span class="lec-period-name">${esc(p.name)}</span><ul class="lec-students">${students}</ul></li>`;
+    }).join('');
 
     return `
-      <div class="cat-card${members.length ? '' : ' cat-empty'}">
-        <div class="cat-header">
-          <span class="cat-title">${esc(p.name)}</span>
-          <span class="cat-count${full ? ' at-cap' : ''}">${members.length}&thinsp;/&thinsp;${p.capacity}</span>
-        </div>
-        ${p.lecturer ? `<div class="cat-lecturer">מרצה: ${esc(p.lecturer)}</div>` : ''}
-        <table class="data-table inner-table">
-          <thead><tr><th>סטודנט/ית</th>${showRanks ? '<th>רמת העדפה</th>' : ''}</tr></thead>
-          <tbody>${bodyRows}</tbody>
-        </table>
+      <div class="lec-card">
+        <div class="lec-header">${lecturer ? `מרצה: ${esc(lecturer)}` : 'ללא מרצה'}</div>
+        <ol class="lec-periods">${items}</ol>
       </div>`;
   }).join('');
 
-  resultsCont.innerHTML = `<div class="cat-grid${state.revealMode ? ' cat-grid--reveal' : ''}">${cards}</div>`;
+  resultsCont.innerHTML = `<div class="lec-grid${state.revealMode ? ' lec-grid--reveal' : ''}">${cards}</div>`;
   if (state.revealMode) {
-    resultsCont.querySelectorAll('.cat-card').forEach((el, i) => { el.style.animationDelay = `${i * 0.07}s`; });
+    resultsCont.querySelectorAll('.lec-card').forEach((el, i) => { el.style.animationDelay = `${i * 0.07}s`; });
   }
+}
+
+// Placement statistics for the exported file: [label, count, percent of students].
+function resultStats() {
+  const {results, projects} = state;
+  const n   = results.length;
+  const pct = k => n ? Math.round(k / n * 100) : 0;
+  const count   = tier => results.filter(r => r.tier === tier).length;
+  const primary = count(TIER_PRIMARY);
+  const second  = count(TIER_SECONDARY);
+  const random  = count(TIER_NONE);
+  const empty   = projects.filter(p => !results.some(r => r.project === p.name)).length;
+
+  return [
+    ['מדד', 'מספר', 'אחוז'],
+    ['סה"כ סטודנטים', n, ''],
+    ['קיבלו עדיפות ראשונה', primary, `${pct(primary)}%`],
+    ['קיבלו עדיפות שניה', second, `${pct(second)}%`],
+    ['קיבלו אחת מהבחירות שלהם', primary + second, `${pct(primary + second)}%`],
+    ['שובצו אקראית', random, `${pct(random)}%`],
+    ['תקופות ללא סטודנטים', empty, ''],
+  ];
 }
 
 // ── Export ─────────────────────────────────────────────────────────────────────
 const EXPORT_HEADER = ['ID', 'שם', 'תקופה שהוקצתה', 'מרצה', 'רמת העדפה'];
 
-function exportRows() {
-  return [EXPORT_HEADER, ...state.results.map(r =>
+function exportRows(results = state.results) {
+  return [EXPORT_HEADER, ...results.map(r =>
     [r.id, r.name, r.project, r.lecturer, LEVEL_LABELS[r.tier]])];
+}
+
+function resultsSheet(results) {
+  const ws = XLSX.utils.aoa_to_sheet(exportRows(results));
+  // IDs are text: without this Excel drops any leading zero and re-formats them.
+  results.forEach((r, i) => {
+    const cell = ws[XLSX.utils.encode_cell({r: i + 1, c: 0})];
+    if (cell) { cell.t = 's'; cell.v = String(r.id); }
+  });
+  ws['!cols'] = [{wch: 12}, {wch: 22}, {wch: 48}, {wch: 12}, {wch: 16}];
+  return ws;
+}
+
+// Excel sheet names: at most 31 characters, none of []:*?/\, and unique.
+function sheetName(raw, taken) {
+  const base = raw.replace(/[\[\]:*?/\\]/g, ' ').trim().slice(0, 31) || 'ללא מרצה';
+  let name = base;
+  for (let i = 2; taken.has(name); i++) name = `${base.slice(0, 28)} ${i}`;
+  taken.add(name);
+  return name;
 }
 
 downloadCsvBtn.addEventListener('click', () => {
@@ -704,16 +711,23 @@ downloadCsvBtn.addEventListener('click', () => {
 
 downloadXlsxBtn.addEventListener('click', () => {
   if (!state.results.length) return;
-  const ws = XLSX.utils.aoa_to_sheet(exportRows());
-  // IDs are text: without this Excel drops any leading zero and re-formats them.
-  state.results.forEach((r, i) => {
-    const cell = ws[XLSX.utils.encode_cell({r: i + 1, c: 0})];
-    if (cell) { cell.t = 's'; cell.v = String(r.id); }
-  });
-  ws['!cols'] = [{wch: 12}, {wch: 22}, {wch: 48}, {wch: 12}, {wch: 16}];
   const wb = XLSX.utils.book_new();
   wb.Workbook = {Views: [{RTL: true}]};
-  XLSX.utils.book_append_sheet(wb, ws, 'שיבוץ');
+  const taken = new Set();
+
+  // One sheet with everyone, then one per lecturer (rows grouped by period).
+  XLSX.utils.book_append_sheet(wb, resultsSheet(state.results), sheetName('שיבוץ', taken));
+  const order = new Map(state.projects.map((p, i) => [p.name, i]));
+  [...new Set(state.projects.map(p => p.lecturer))].forEach(lecturer => {
+    const rows = state.results
+      .filter(r => r.lecturer === lecturer)
+      .sort((a, b) => order.get(a.project) - order.get(b.project));
+    XLSX.utils.book_append_sheet(wb, resultsSheet(rows), sheetName(lecturer, taken));
+  });
+
+  const stats = XLSX.utils.aoa_to_sheet(resultStats());
+  stats['!cols'] = [{wch: 28}, {wch: 10}, {wch: 10}];
+  XLSX.utils.book_append_sheet(wb, stats, sheetName('סטטיסטיקה', taken));
   XLSX.writeFile(wb, 'שיבוץ_תקופות.xlsx');
 });
 
@@ -722,9 +736,8 @@ resetBtn.addEventListener('click', () => {
   Object.assign(rawFiles, {students: null, projects: null, prefs: null});
   Object.assign(state, {
     students: [], projects: [], prefs: new Map(), aliases: new Map(), ignored: new Set(),
-    unmatched: [], warnings: [], results: [], showRanks: false, revealMode: false,
+    unmatched: [], warnings: [], results: [], revealMode: false,
   });
-  revealToggle.checked = false;
   [studentsInput, projectsFileIn, prefsInput].forEach(i => { i.value = ''; });
   [studentsFileName, projectsFileName, prefsFileName].forEach(l => { l.textContent = 'לא נבחר קובץ'; });
   validationErrors.innerHTML = '';

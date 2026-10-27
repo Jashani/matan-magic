@@ -36,7 +36,7 @@ Each student picks **3 unordered first-priority** periods and **3 unordered seco
 1. **Upload** the three files (any order; parsing runs once all three are present).
 2. **Preview** — periods table, students-with-preferences table, validation warnings.
 3. **Review unrecognised choices, then run** — see below.
-4. **Results** — period cards with lecturer and student lists. Toggle (default OFF) reveals each student's preference level. Export to xlsx or CSV. Reset.
+4. **Results** — one card per lecturer (not per period), each listing that lecturer's numbered periods with their students. **No preference levels and no placement statistics on screen** (the page is projected for the students); both live only in the exports. Export to xlsx or CSV. Reset.
 
 **ID numbers are never shown on screen** — not in the preview, not in the results —
 only in the downloaded file, so results can be projected publicly. Warnings about a
@@ -108,7 +108,6 @@ state = {
   unmatched: [{text, count, suggestions: [{project, score}]}],
   warnings:  string[],
   results:   [{id, name, project, lecturer, tier}],     // tier: 0 / 1 / 2
-  showRanks:  boolean,
   revealMode: boolean,
 }
 ```
@@ -117,6 +116,7 @@ state = {
 
 Columns, in this order: `ID | שם | תקופה שהוקצתה | מרצה | רמת העדפה`, where the level is
 `עדיפות ראשונה` / `עדיפות שניה` / `שיבוץ אקראי`. Rows follow the students-file order.
+The xlsx has several sheets: `שיבוץ` (everyone, in the table above), one sheet per lecturer (same columns, that lecturer's students grouped by period; names pass through `sheetName` for Excel's 31-char / forbidden-character limits), and last `סטטיסטיקה` (`resultStats`): counts and percentages per tier, plus periods left empty. The CSV is a single table and carries no statistics.
 In the xlsx export the ID column is forced to text so Excel cannot drop a leading zero.
 
 ## Key design decisions
@@ -125,4 +125,4 @@ In the xlsx export the ID column is forced to text so Excel cannot drop a leadin
 - **Capacities come from the periods file**, per period. There is no minimum group size: only the per-period maximum is enforced, so a period can end up under-filled if total capacity exceeds the number of students.
 - **IDs are strings throughout** (`normId`) — Israeli IDs can carry a leading zero, and spreadsheet exports may hand them over in scientific notation.
 - **Column detection is specificity-ranked** (`findCol`): patterns are listed most-specific-first and the column matching the most specific pattern wins. A first-match-wins search ties `"תעודת זהות"` with the Google-Forms timestamp `"חותמת זמן"`, which also contains the loose `ת.ז` pattern.
-- **Toggle default OFF** — preference levels are hidden on load so the teacher can display results publicly without revealing who got a second-priority project, then flip the toggle deliberately.
+- **Preference levels are never shown on screen** — the results show names only, so the page can be projected for the students without revealing who got a second-priority project. The level is in the export's `רמת העדפה` column.
